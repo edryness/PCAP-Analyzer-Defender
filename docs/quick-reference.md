@@ -45,7 +45,7 @@
 ## Command line
 
 ```powershell
-$analyzer = "<folder>\PCAP-AnalyzerV16_5-copilot.ps1"
+$analyzer = "<folder>\PCAP-Analyzer.ps1"
 $cap      = "<folder>\ConvertedTrace.pcapng"
 $ts       = "C:\Program Files\Wireshark\tshark.exe"
 
