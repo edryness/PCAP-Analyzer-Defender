@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    PCAP Analyzer for MDE - Windows GUI for PCAP-AnalyzerV16_5-copilot.ps1
+    PCAP Analyzer for MDE - Windows GUI for PCAP-Analyzer.ps1
 
 .DESCRIPTION
     Pick a capture, tick -All and/or -Domain, press Run. The analyzer runs in a hidden
@@ -38,7 +38,7 @@ $AppTitle   = 'PCAP Analyzer for MDE  -  V16.5 + Copilot'
 $AppCredit  = 'Designed and developed by Bryan Rigano  |  Defender for Endpoint Team'
 $Disclaimer = 'Results are generated automatically from packet-capture analysis and AI-assisted recommendations. ' +
               'Validate findings in Wireshark before acting on them or sharing them with customers, particularly where a result appears inconsistent or unexpected.'
-$EngineName = 'PCAP-AnalyzerV16_5-copilot.ps1'
+$EngineName = 'PCAP-Analyzer.ps1'
 
 # Build-PcapAnalyzerExe.ps1 swaps this value for the analyzer's code (base64). From source it stays a placeholder.
 $EmbeddedEngine = '__EMBEDDED_ENGINE_BASE64__'
