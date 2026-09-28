@@ -1,0 +1,22 @@
+# Packet captures - never commit these (they contain real network/customer data)
+*.pcap
+*.pcapng
+*.cap
+*.etl
+
+# Analyzer output
+*_CopilotPlan_*.md
+*_CopilotPrompt.txt
+*_analysis_*.rtf
+*_analysis_*.txt
+*.redaction-map.json
+
+# Build output - publish the .exe on the Releases page, not in the repo
+*.exe
+build/
+
+# Local / editor files
+.vscode/
+*.log
+Thumbs.db
+desktop.ini
