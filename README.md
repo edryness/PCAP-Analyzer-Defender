@@ -34,8 +34,8 @@ PCAP Analyzer reads a capture (for example `ConvertedTrace.pcapng` from MDE Clie
 **Command line:**
 
 ```powershell
-.\src\PCAP-AnalyzerV16_5-copilot.ps1 -PcapPath .\ConvertedTrace.pcapng -All -TsharkPath "C:\Program Files\Wireshark\tshark.exe"
-.\src\PCAP-AnalyzerV16_5-copilot.ps1 -PcapPath .\ConvertedTrace.pcapng -Domain winatp-gw-eus3.microsoft.com -Detailed -TsharkPath "C:\Program Files\Wireshark\tshark.exe"
+.\src\PCAP-Analyzer.ps1 -PcapPath .\ConvertedTrace.pcapng -All -TsharkPath "C:\Program Files\Wireshark\tshark.exe"
+.\src\PCAP-Analyzer.ps1 -PcapPath .\ConvertedTrace.pcapng -Domain winatp-gw-eus3.microsoft.com -Detailed -TsharkPath "C:\Program Files\Wireshark\tshark.exe"
 ```
 
 ## Recommended workflow
