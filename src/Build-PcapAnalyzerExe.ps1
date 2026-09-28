@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     1. Installs the PS2EXE module for your user if it's missing (from the PowerShell Gallery).
-    2. Embeds PCAP-AnalyzerV16_5-copilot.ps1 into PCAP-Analyzer-GUI.ps1 (base64).
+    2. Embeds PCAP-Analyzer.ps1 into PCAP-Analyzer-GUI.ps1 (base64).
     3. Compiles that into PCAP-Analyzer.exe - a windowed app, no console.
     4. Optionally signs the .exe with your code-signing certificate (-CertThumbprint).
 
@@ -19,7 +19,7 @@
     .\Build-PcapAnalyzerExe.ps1 -Version 16.5.1.0 -CertThumbprint 0123456789ABCDEF0123456789ABCDEF01234567
 #>
 param(
-    [string]$Analyzer = (Join-Path $PSScriptRoot 'PCAP-AnalyzerV16_5-copilot.ps1'),
+    [string]$Analyzer = (Join-Path $PSScriptRoot 'PCAP-Analyzer.ps1'),
     [string]$Gui      = (Join-Path $PSScriptRoot 'PCAP-Analyzer-GUI.ps1'),
     [string]$Icon     = (Join-Path $PSScriptRoot 'mde.ico'),
     [string]$OutFile  = (Join-Path $PSScriptRoot 'PCAP-Analyzer.exe'),
