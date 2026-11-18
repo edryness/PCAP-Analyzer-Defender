@@ -33,6 +33,12 @@ It's the recommended first pass because it checks every required URL. If you alr
 **Why is -Detailed greyed out?**
 It only applies to -Domain. Tick -Domain first.
 
+**-Domain says there is no DNS or TLS for a host, but the capture shows it. Why?**
+With an explicit proxy the device never looks the name up itself: it asks the proxy to open a tunnel (HTTP CONNECT), and a refused tunnel has no TLS Client Hello. The output lists the CONNECT requests with the proxy's answers instead, and says when the address shown is the proxy's.
+
+**Section 11 has a "Certificate trust" finding. Is that SSL inspection?**
+No. The device itself refused a normal Microsoft certificate chain (a fatal TLS alert sent by the device right after the server's certificate), so nothing is re-signing the traffic: the problem is the device's trust of the chain. Follow the checks in the finding (Cryptographic Services, the `AuthRoot` key permissions compared with a working server, the root-update policy, `ctldl.windowsupdate.com`). Don't add an SSL-inspection exclusion for it. It only shows in TLS 1.2 captures, because under TLS 1.3 the certificate and the alert are encrypted.
+
 **Section 11 says "no actionable issues" but the customer is still broken. Why?**
 Section 11 deliberately leaves out ambiguous and informational results. Review Sections 6-10 for `[UNKNOWN]` and `[INFO]` lines, confirm the capture covers the failure window, and consider causes outside the network path (device health, onboarding state, time sync).
 

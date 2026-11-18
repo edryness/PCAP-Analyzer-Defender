@@ -4,6 +4,70 @@
 ================================================================================
 
 ================================================================================
+ V16.5.6 - CERTIFICATE TRUST: THE DEVICE REJECTS MICROSOFT'S GENUINE CHAIN
+ - A failed handshake used to be read as "possible SSL inspection". Now, when
+   the DEVICE ITSELF sends a fatal TLS alert (bad_certificate,
+   certificate_unknown or unknown_ca) right after the server's certificate, and
+   that certificate chain is Microsoft's own (Microsoft / DigiCert / Baltimore /
+   GlobalSign names, no inspecting-vendor name), the finding is "Certificate
+   trust" instead of Connectivity: the problem is the device's own trust of the
+   chain, not SSL inspection. Likely causes: Windows cannot maintain its trusted
+   root list - Cryptographic Services (CryptSvc) missing permissions on
+   HKLM\SOFTWARE\Microsoft\SystemCertificates\AuthRoot and its AutoUpdate key
+   (the cause in a previous case: a working server had the permission, the
+   failing one did not), ctldl.windowsupdate.com unreachable, the "Turn off
+   Automatic Root Certificates Update" policy, or an unpatched Windows.
+ - Only visible with TLS 1.2: under TLS 1.3 the certificate and the alert are
+   encrypted. An alert sent by the server, certificate_expired /
+   certificate_revoked, or a chain with an inspecting vendor in it keep their
+   old findings. Certificate names for this check are read in full, as the
+   portal page does.
+ - The suggested fix lists the read-only checks to run on the device (the
+   portal page puts them in its section 13). Same wording as the portal page.
+================================================================================
+
+================================================================================
+ V16.5.5 - PROXY ANSWERS, -DOMAIN THROUGH A PROXY, PLAIN-HTTP (PORT 80) FAILURES
+ - Section 10 reads what the proxy answered to a CONNECT instead of calling every
+   answer other than 200/407 a policy block. 504 Unknown Host (or another "host
+   not found" reason) is the proxy failing to resolve the name - its DNS, not an
+   ACL; any other 5xx is a gateway error; 3xx is a redirect (sign-in / block
+   page); 403 and the other 4xx stay "policy/ACL". The finding's cause and fix
+   follow the answer.
+ - -Domain for a host the device only asked a proxy for (HTTP CONNECT): with an
+   explicit proxy the device never looks the name up itself, and a refused tunnel
+   has no TLS Client Hello, so the old "No DNS or TLS traffic found" was true but
+   hid that the host WAS tried. It now lists the CONNECT requests with the
+   proxy's answers and why there is no DNS or TLS, raises the finding, adds hosts
+   seen only as a CONNECT to "Similar domains", and says in section 4 when the
+   address shown is the proxy's.
+ - Plain HTTP (TCP 80) is now followed for SYN / SYN-ACK. Microsoft serves
+   certificate revocation (CRL) and issuer (AIA) downloads over plain HTTP; a
+   Microsoft host the device resolved itself and then tried on port 80 with the
+   SYN never answered used to show only as "DNS resolved but no TLS traffic" and
+   raised no finding. Section 10 now lists those hosts (documented MDE / Gov
+   URLs, *.microsoft.com, *.microsoft.us and the -Domain) as "Direct connections
+   to Microsoft hosts that got no answer", with a Connectivity finding. Same
+   behavior as the portal's PCAP Analyzer page.
+ - Windows PowerShell 5.1 fix: .Count on a single object came back empty (it
+   works in PowerShell 7), so ONE matching Client Hello / 407 / DNS record looked
+   like none. Visible effects: "ACCEPTED (200): 0 had a TLS Client Hello follow"
+   with the TLS reassembly-gap advice for a tunnel that did have its Client
+   Hello, per-IP handshake stages that lost their Client Hello, and -Domain
+   skipping sections 1-3 and 5 for a host with a single Client Hello. The lists
+   are now wrapped in @() where it mattered. No change in PowerShell 7.
+================================================================================
+
+================================================================================
+ V16.5.4 - PII GUARDRAIL IN COPILOT PROMPT
+ - Section 12 prompt now starts with data handling rules: Copilot must not ask
+   for, repeat, or retain PII (customer hostnames, device/domain names,
+   usernames, emails, company names, tenant/org IDs, case numbers) and refers
+   to them generically instead. Local and Microsoft IPs and Microsoft URLs are
+   fine. Applies to both the CLI and Chat paths. No other behavior changed.
+================================================================================
+
+================================================================================
  V16.5.3 - US GOV / DOD + COMMERCIAL PORTAL URL COVERAGE
  - Gov list (sections 8/9) adds: security.apps.mil (DoD portal),
    *.gcc.securitycenter.microsoft.us (GCC portal), the portal auth/CDN hosts
@@ -211,6 +275,10 @@
      sweep (below) has already told you where to look. This is also the
      only mode that gives cipher-level and byte-count detail; the sweep
      switches only report pass/fail/stage, not why.
+     V16.5.5: if the device only asked a proxy for this host (HTTP CONNECT),
+     there is no DNS or TLS for it on the device's side; the output then lists
+     the CONNECT requests and what the proxy answered instead of stopping at
+     "No DNS or TLS traffic found".
 
  -CheckMdeUrlsOnly
      Lightweight sweep: ONLY the commercial SSL inspection check (section 6)
@@ -254,6 +322,11 @@
      between the client and Microsoft, and pinpointing proxy-auth (407) as
      the specific failure stage - a very common root cause for the Sense
      service specifically, since it runs as SYSTEM.
+     V16.5.5: it also reads WHAT the proxy answered (504 Unknown Host = the
+     proxy could not resolve the name, not a policy block) and lists Microsoft
+     hosts the device tried directly on TCP 80 (certificate revocation / issuer
+     downloads) that never got an answer - typically a component that is not
+     using the proxy the rest of the traffic goes through.
 
  (no switch needed) - Section 11: SUMMARY & RECOMMENDED ACTIONS
      Always runs last, on every invocation. Pulls together only the real,
@@ -344,7 +417,7 @@ param(
 )
 
 Write-Host "==============================================================================" -ForegroundColor Cyan
-Write-Host " PCAP Analyzer V16.5.3 - MDE connectivity analysis" -ForegroundColor Cyan
+Write-Host " PCAP Analyzer V16.5.6 - MDE connectivity analysis" -ForegroundColor Cyan
 Write-Host " Created by Bryan Rigano | Defender for Endpoint Team" -ForegroundColor Cyan
 Write-Host "==============================================================================" -ForegroundColor Cyan
 
@@ -634,6 +707,11 @@ $ProxyVendorKeywords = @("zscaler", "palo alto", "paloalto", "forcepoint", "blue
     "checkpoint", "check point", "sonicwall", "watchguard", "sophos", "mcafee", "iboss", "menlo")
 $KnownGoodCaKeywords = @("microsoft", "digicert", "globalsign", "sectigo", "comodo", "entrust",
     "baltimore", "godaddy", "let's encrypt", "letsencrypt", "amazon", "google trust")
+# V16.5.6: the genuine chain of Microsoft's service certificates (Microsoft issuing CAs under DigiCert / Baltimore / GlobalSign roots).
+$MicrosoftChainKeywords = @("microsoft", "digicert", "baltimore", "globalsign")
+# V16.5.6: TLS alerts a client sends when it does not accept the certificate chain it was given. certificate_expired (45) and
+# certificate_revoked (44) are other problems (the clock, or a real revocation) and are not in this list.
+$ClientRejectsChainAlertNames = @{ "42" = "bad_certificate"; "46" = "certificate_unknown"; "48" = "unknown_ca" }
 
 function Resolve-TlsVersionName {
     param([string]$Code)
@@ -681,12 +759,14 @@ function ConvertTo-ByteCount {
 }
 
 function Get-CertificateCommonNames {
-    param([string]$Stream)
+    # -Full (V16.5.6) keeps the whole name ("Microsoft Azure RSA TLS Issuing CA 03"); without it only the first word is kept, as before.
+    param([string]$Stream, [switch]$Full)
     $tsArgs = @("-r", $PcapPath, "-Y", "tcp.stream==$Stream && tls.handshake.type==11", "-O", "tls")
     $raw = & $TsharkPath @tsArgs 2>$null
     if (-not $raw) { return @() }
     $text = $raw -join "`n"
-    $cns = [regex]::Matches($text, 'id-at-commonName=([^\s\),]+)') | ForEach-Object { $_.Groups[1].Value }
+    $cnPattern = if ($Full) { 'id-at-commonName=([^,\)\r\n]+)' } else { 'id-at-commonName=([^\s\),]+)' }
+    $cns = [regex]::Matches($text, $cnPattern) | ForEach-Object { $_.Groups[1].Value.Trim() }
     # A multi-segment Certificate message can get its full reassembled protocol
     # tree echoed once per contributing frame when tshark evaluates the filter,
     # so the same CN set can come back duplicated 2-3x. De-dup to the distinct
@@ -1064,11 +1144,16 @@ foreach ($line in $shLines) {
 # ---------------------------------------------------------------------------
 # TLS Alerts / TCP Resets (full capture)
 # ---------------------------------------------------------------------------
-$alertLines = Invoke-TsharkFields -Filter "tls.record.content_type == 21" -FieldNames @("tcp.stream", "tls.alert_message.level", "tls.alert_message.desc") -Occurrence "f"
+# V16.5.6: ip.src added, to tell an alert the client sent from one the server sent (kept apart so $alertsByStream's text is unchanged).
+$alertLines = Invoke-TsharkFields -Filter "tls.record.content_type == 21" -FieldNames @("tcp.stream", "tls.alert_message.level", "tls.alert_message.desc", "ip.src") -Occurrence "f"
 $alertsByStream = @{}
+$alertSrcByStream = @{}
 foreach ($line in $alertLines) {
     $c = $line -split "\|"
-    if ($c.Count -ge 3) { $alertsByStream[(Get-FirstValue $c[0])] = "$($c[1]) - $($c[2])" }
+    if ($c.Count -ge 3) {
+        $alertsByStream[(Get-FirstValue $c[0])] = "$($c[1]) - $($c[2])"
+        if ($c.Count -ge 4) { $alertSrcByStream[(Get-FirstValue $c[0])] = $c[3] }
+    }
 }
 $rstLines = Invoke-TsharkFields -Filter "tcp.flags.reset == 1" -FieldNames @("tcp.stream", "ip.src", "ip.dst") -Occurrence "f"
 $rstByStream = @{}
@@ -1124,6 +1209,30 @@ foreach ($line in $icmpLines) {
     }
 }
 $ackStreams = ($ackLines | ForEach-Object { Get-FirstValue $_ }) | Select-Object -Unique
+
+# ---------------------------------------------------------------------------
+# V16.5.5: plain HTTP (TCP 80). Microsoft serves certificate revocation (CRL)
+# and issuer (AIA) downloads - and some update downloads - over plain HTTP, so
+# a Microsoft host the device looks up in DNS itself and then tries on port 80
+# can fail without a single port-443 SYN or TLS record. Kept apart from the
+# port-443 tables above, which the TLS handshake logic reads.
+# ---------------------------------------------------------------------------
+$syn80Lines = Invoke-TsharkFields -Filter "tcp.flags.syn == 1 && tcp.flags.ack == 0 && tcp.dstport == 80" -FieldNames @("ip.dst", "tcp.stream") -Occurrence "f"
+$synAck80Lines = Invoke-TsharkFields -Filter "tcp.flags.syn == 1 && tcp.flags.ack == 1 && tcp.srcport == 80" -FieldNames @("ip.src", "tcp.stream") -Occurrence "f"
+$synByIp80 = @{}
+foreach ($line in $syn80Lines) {
+    $c = $line -split "\|"
+    if ($c.Count -ge 2 -and $c[0]) {
+        $ip = $c[0]; $stream = Get-FirstValue $c[1]
+        if (-not $synByIp80.ContainsKey($ip)) { $synByIp80[$ip] = @() }
+        $synByIp80[$ip] += $stream
+    }
+}
+$synAckByIp80 = @{}
+foreach ($line in $synAck80Lines) {
+    $c = $line -split "\|"
+    if ($c.Count -ge 2 -and $c[0]) { $synAckByIp80[$c[0]] = $true }
+}
 
 # ---------------------------------------------------------------------------
 # HTTP CONNECT tunnels / HTTP response codes (full capture) - used by the
@@ -1194,6 +1303,254 @@ function Get-HostFromConnectTarget {
     return $Target
 }
 
+# V16.5.5: what a proxy's answer to a CONNECT means. 200 opens the tunnel and
+# 407 asks for credentials; anything else is the proxy refusing or failing.
+# "Unknown Host" or a gateway error (502/503/504) is the proxy failing to
+# resolve or reach the destination - a different problem, with a different fix,
+# from a policy block (403). The reason phrase comes from the capture, so it is
+# cleaned before use. Returns Kind (dns / upstream / redirect / policy / other),
+# Label ("504 Unknown Host"), Short (one line), Cause and Fix.
+function Get-ProxyReplyInfo {
+    param([string]$Code, [string]$Phrase, [string]$TargetHost = "")
+    $c = "$Code"
+    $p = [regex]::Replace("$Phrase", "[^A-Za-z0-9 ._()/,'-]", "")
+    $p = ([regex]::Replace($p, "\s+", " ")).Trim()
+    if ($p.Length -gt 60) { $p = $p.Substring(0, 60) }
+    $label = if ($p) { "$c $p" } else { $c }
+    $h = if ($TargetHost) { $TargetHost } else { "this host" }
+    if ($p -match 'unknown host|host not found|name not resolved|cannot resolve|could not resolve|unable to resolve|no such host|dns (error|fail)|nxdomain') {
+        return @{
+            Kind  = "dns"
+            Label = $label
+            Short = "the proxy could not resolve this host name (a DNS failure on the proxy, not a policy block)."
+            Cause = "The proxy answered ""$label"": it could not resolve this host name. With an explicit proxy the device sends the name inside the CONNECT request and the proxy does the DNS lookup, so the failure is on the proxy side (its DNS has no answer for the name), not an access-policy block. It is also why this device has no DNS query or TLS traffic for it. Names that only exist in another cloud (for example US Government or classified-cloud endpoints tried from a commercial tenant) normally fail this way and are harmless."
+            Fix   = "If the tenant is in the cloud this host belongs to, ask the proxy admin to check that the proxy's DNS servers resolve $h (and that DNS filtering is not blocking it), then re-test. If the tenant is in a different cloud, nothing needs fixing: only the endpoint for the tenant's own cloud has to work."
+        }
+    }
+    if ($c -match '^5\d\d$') {
+        return @{
+            Kind  = "upstream"
+            Label = $label
+            Short = "a gateway error: the proxy could not reach or complete the connection to the destination."
+            Cause = "The proxy answered ""$label"": it accepted the request but could not complete the connection to the destination. This is a gateway error from the proxy, not an authentication challenge or a policy block. Typical reasons: the proxy could not connect or timed out reaching the host, its own upstream firewall or DNS failed, or the proxy is overloaded or failing."
+            Fix   = "Ask the proxy admin to check the proxy's log for this destination (why the upstream connection failed) and that the proxy itself can reach the documented MDE URLs on TCP 443, then re-test."
+        }
+    }
+    if ($c -match '^3\d\d$') {
+        return @{
+            Kind  = "redirect"
+            Label = $label
+            Short = "the proxy redirected the request instead of opening the tunnel (sign-in, captive-portal or block page)."
+            Cause = "The proxy answered ""$label"", redirecting the CONNECT instead of opening the tunnel - typically to a sign-in, captive-portal or block page."
+            Fix   = "Exempt the documented MDE URLs from the proxy's web-authentication and block-page redirects, then re-test."
+        }
+    }
+    return @{
+        Kind  = $(if ($c -match '^4\d\d$') { "policy" } else { "other" })
+        Label = $label
+        Short = "investigate proxy-side policy/ACL."
+        Cause = "The proxy is actively blocking this destination via policy/ACL rather than simply requiring authentication."
+        Fix   = "Add an allow-list/exception on the proxy for the documented MDE connectivity URLs, then re-test."
+    }
+}
+
+# Groups CONNECT answers by label ("504 Unknown Host"), case-insensitive, in order of first appearance.
+function Group-ProxyReplies {
+    param([array]$Replies)
+    $groups = New-Object System.Collections.ArrayList
+    $byKey = @{}
+    foreach ($r in $Replies) {
+        $lab = (Get-ProxyReplyInfo -Code $r.Code -Phrase $r.Phrase).Label
+        $key = $lab.ToLower()
+        if (-not $byKey.ContainsKey($key)) {
+            $g = [PSCustomObject]@{ Name = $lab; Items = (New-Object System.Collections.ArrayList) }
+            $byKey[$key] = $g
+            [void]$groups.Add($g)
+        }
+        [void]$byKey[$key].Items.Add($r)
+    }
+    return $groups.ToArray()
+}
+
+# CONNECTs to one host that the proxy answered 407 / with something other than 200 or 407 (shared by section 10 and -Domain).
+function Add-407Finding {
+    param([string]$TargetHost, [array]$Reqs, [int]$Rejected407)
+    Add-Finding -Category "Proxy" `
+        -GroupKey "ProxyAuth407|$TargetHost" `
+        -Target $TargetHost `
+        -Section "Section 10 (Proxy Detection)" `
+        -Issue "$Rejected407/$($Reqs.Count) CONNECT tunnel(s) to $TargetHost were rejected pending proxy authentication (407)." `
+        -LikelyCause "The forward proxy requires authentication before allowing this connection through - a common root cause for the Sense service specifically, since it runs as SYSTEM and typically has no cached/WinHTTP proxy credentials." `
+        -SuggestedFix "Configure a proxy authentication exception/allow-list for MDE URLs, or provide the SYSTEM account (WinHTTP) with proxy credentials/authentication bypass, per Microsoft's Sense proxy configuration guidance."
+}
+
+function Add-ProxyReplyFinding {
+    param([string]$TargetHost, [array]$Reqs, [array]$Replies)
+    # most frequent answer first; ties keep the order of first appearance
+    $sorted = New-Object System.Collections.ArrayList
+    foreach ($g in @(Group-ProxyReplies -Replies $Replies)) {
+        $pos = $sorted.Count
+        for ($n = 0; $n -lt $sorted.Count; $n++) { if ($g.Items.Count -gt $sorted[$n].Items.Count) { $pos = $n; break } }
+        $sorted.Insert($pos, $g)
+    }
+    $k = Get-ProxyReplyInfo -Code $sorted[0].Items[0].Code -Phrase $sorted[0].Items[0].Phrase -TargetHost $TargetHost
+    $gotParts = @()
+    foreach ($g in $sorted) { $gotParts += $(if ($sorted.Count -gt 1) { """$($g.Name)"" ($($g.Items.Count))" } else { """$($g.Name)""" }) }
+    $got = $gotParts -join ", "
+    Add-Finding -Category "Proxy" `
+        -GroupKey "ProxyOtherCode|$TargetHost" `
+        -Target $TargetHost `
+        -Section "Section 10 (Proxy Detection)" `
+        -Issue "$($Replies.Count)/$($Reqs.Count) CONNECT tunnel(s) to $TargetHost were answered $got by the proxy (not 200 or 407)." `
+        -LikelyCause $k.Cause `
+        -SuggestedFix $k.Fix
+}
+
+# V16.5.5: Microsoft hosts the device looked up in DNS itself and then tried to
+# reach straight on TCP 80 (certificate revocation / issuer downloads, some
+# updates): SYN sent, never a SYN-ACK. Port 443 is covered by the handshake
+# sweeps (sections 7 and 9) and the proxy section.
+function Test-IsMicrosoftHost {
+    param([string]$Name)
+    if (-not $Name) { return $false }
+    foreach ($p in $MdeRequiredUrlPatterns) { if ($Name -like $p) { return $true } }
+    foreach ($p in $GovRequiredUrlPatterns) { if ($Name -like $p) { return $true } }
+    if ($Name -like '*.microsoft.com' -or $Name -like '*.microsoft.us') { return $true }
+    if ($Domain -and $Name -like "*$Domain*") { return $true }
+    return $false
+}
+
+function Get-DirectNoAnswer {
+    $ipsByName = [ordered]@{}
+    foreach ($d in $dnsRecords) {
+        if (-not $d.A) { continue }                      # answers only
+        $ips = @($d.A -split "[;,]" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d{1,3}(\.\d{1,3}){3}$' })
+        if ($ips.Count -eq 0) { continue }
+        foreach ($name in ($d.QryName.ToLower() -split ",")) {
+            if (-not $name -or -not (Test-IsMicrosoftHost -Name $name)) { continue }
+            if (-not $ipsByName.Contains($name)) { $ipsByName[$name] = @() }
+            foreach ($ip in $ips) { if ($ipsByName[$name] -notcontains $ip) { $ipsByName[$name] += $ip } }
+        }
+    }
+    foreach ($name in $ipsByName.Keys) {
+        $ips = @($ipsByName[$name])
+        if (@($ips | Where-Object { $synAckByIp80.ContainsKey($_) }).Count -gt 0) { continue }    # port 80 worked for this name: some address answered
+        $dead = @($ips | Where-Object { $synByIp80.ContainsKey($_) })
+        if ($dead.Count -eq 0) { continue }
+        $allSyn = @($dead | ForEach-Object { $synByIp80[$_] })                                    # one entry per SYN frame
+        $streams = @($allSyn | Select-Object -Unique)
+        [PSCustomObject]@{
+            Name    = $name
+            Ips     = $dead
+            Streams = $streams
+            Resets  = @($streams | Where-Object { $rstByStream.ContainsKey($_) }).Count
+            Syns    = $allSyn.Count
+        }
+    }
+}
+$directNoAnswer = @(Get-DirectNoAnswer)
+
+# "  (N direct TCP 80 connection attempt(s) got no answer - see section 10)" for the sweeps' "DNS resolved but no TLS" lists.
+function Get-NoAnswerNote {
+    param([string]$Name)
+    $d = $directNoAnswer | Where-Object { $_.Name -eq $Name.ToLower() } | Select-Object -First 1
+    if ($d) { return "  ($($d.Streams.Count) direct TCP 80 connection attempt(s) got no answer - see section 10)" }
+    return ""
+}
+
+# Direct connections (not through a proxy) to Microsoft hosts that never got a SYN-ACK: see $directNoAnswer above.
+function Show-DirectNoAnswer {
+    if ($directNoAnswer.Count -eq 0) { return }
+    $proxies = @($connectRequests | ForEach-Object { "$($_.Dst):$($_.DstPort)" } | Select-Object -Unique)
+    $endpoints = "crl.microsoft.com, www.microsoft.com/pkiops, caissuers.microsoft.com, ctldl.windowsupdate.com"
+    Write-Host "`n     -- Direct connections to Microsoft hosts that got no answer: $($directNoAnswer.Count) host(s) --" -ForegroundColor Yellow
+    foreach ($d in $directNoAnswer) {
+        $rst = if ($d.Resets -gt 0) { " ($($d.Resets) ended with a TCP reset)" } else { "" }
+        Write-Host ""
+        Write-Host "     [NO ANSWER] $($d.Name) - $($d.Streams.Count) direct connection attempt(s) to TCP port 80 ($($d.Ips -join ', ')): $($d.Syns) SYN(s) sent, no SYN-ACK ever came back$rst" -ForegroundColor Red
+        Write-Host "         -> The device looked this name up in DNS itself and tried to connect straight to it on plain HTTP (port 80). Microsoft" -ForegroundColor Red
+        Write-Host "            serves certificate revocation (CRL) and issuer (AIA) downloads over plain HTTP, so a block here delays or breaks" -ForegroundColor Red
+        Write-Host "            certificate validation, including for the MDE TLS connections." -ForegroundColor Red
+        if ($proxies.Count -gt 0) {
+            $shown = ($proxies | Select-Object -First 3) -join ", "
+            Write-Host "         -> The same capture shows this device sending other MDE traffic through the proxy $shown (HTTP CONNECT), so" -ForegroundColor Yellow
+            Write-Host "            these requests most likely bypass the proxy (the component making them is not using it) and the network drops them." -ForegroundColor Yellow
+            $cause = "The device resolves this name itself and connects straight to it on port 80 instead of going through the proxy that carries its other MDE traffic ($shown), and the network drops direct outbound web traffic. Port 80 is where Microsoft serves certificate revocation (CRL) and issuer (AIA) downloads, so this is most likely a certificate check made by a component that is not using the proxy (for example, no WinHTTP system proxy is set for the account making the request)."
+            $fix = "Either allow outbound TCP 80 from the device to $($d.Name) (and the other Microsoft certificate endpoints: $endpoints), or make the request use the proxy (set the WinHTTP system proxy with ""netsh winhttp set proxy"" and allow these URLs without authentication on the proxy). Then re-test."
+        } else {
+            Write-Host "         -> No proxy was seen in this capture: a firewall or router in the path is most likely dropping outbound TCP 80 to this destination." -ForegroundColor Yellow
+            $cause = "Nothing answers the TCP SYN on port 80: a firewall, router or security group in the path drops outbound TCP 80 to this destination. Port 80 is where Microsoft serves certificate revocation (CRL) and issuer (AIA) downloads, so certificate validation can be delayed or fail."
+            $fix = "Allow outbound TCP 80 from the device to $($d.Name) (and the other Microsoft certificate endpoints: $endpoints), then re-test."
+        }
+        Add-Finding -Category "Connectivity" `
+            -GroupKey "DirectNoAnswer|$($d.Name)" `
+            -Target $d.Name `
+            -Section "Section 10 (Direct connections with no answer)" `
+            -Issue "$($d.Name) - $($d.Streams.Count) direct connection attempt(s) to TCP port 80 ($($d.Ips -join ', ')) got no answer: $($d.Syns) SYN(s) sent, no SYN-ACK$rst." `
+            -LikelyCause $cause `
+            -SuggestedFix $fix
+    }
+}
+
+# -Domain for a host the device only ever asked a proxy for (HTTP CONNECT): the device never looks the name up itself and no TLS
+# Client Hello follows a refused tunnel, so there is neither DNS nor TLS for it. Say what the proxy answered instead of "nothing found".
+function Show-DomainProxyAttempts {
+    param([array]$ConnectMatches)
+    $proxies = @($ConnectMatches | ForEach-Object { "$($_.Dst):$($_.DstPort)" } | Select-Object -Unique)
+    Write-Host "No DNS or TLS traffic found for '$Domain' in this capture - but the device DID try this host through an explicit proxy ($($proxies -join ', ')):" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  HTTP CONNECT request(s) for it: $($ConnectMatches.Count)" -ForegroundColor Yellow
+    foreach ($r in ($ConnectMatches | Select-Object -First 20)) {
+        $resp = if ($httpResponseByStream.ContainsKey($r.Stream)) { $httpResponseByStream[$r.Stream] } else { $null }
+        $answer = if ($resp) { if ($resp.Phrase) { "$($resp.Code) $($resp.Phrase)" } else { "$($resp.Code)" } } else { "no response seen" }
+        $color = if ($resp -and $resp.Code -eq "200") { "Green" } else { "Red" }
+        Write-Host "    Frame $($r.Frame) (stream $($r.Stream)): $($r.Src) -> $($r.Dst):$($r.DstPort)  CONNECT $($r.Target)  =>  $answer" -ForegroundColor $color
+    }
+    if ($ConnectMatches.Count -gt 20) { Write-Host "    ... and $($ConnectMatches.Count - 20) more (use -Detailed to see all of them in section 10)." -ForegroundColor DarkGray }
+    Write-Host ""
+    Write-Host "  Why there is no DNS or TLS for it: with an explicit proxy the device does not look the name up itself. It sends the name to the" -ForegroundColor DarkGray
+    Write-Host "  proxy inside the CONNECT request, and the proxy resolves it and opens the connection. A TLS Client Hello with the host name only" -ForegroundColor DarkGray
+    Write-Host "  follows once the proxy answers 200, so a refused tunnel leaves neither DNS nor TLS for this host in the capture." -ForegroundColor DarkGray
+    $byHost = @($ConnectMatches | Group-Object { Get-HostFromConnectTarget -Target $_.Target })
+    foreach ($g in $byHost) {
+        $other = @(); $n407 = 0; $n200 = 0; $none = 0
+        foreach ($r in $g.Group) {
+            $resp = if ($httpResponseByStream.ContainsKey($r.Stream)) { $httpResponseByStream[$r.Stream] } else { $null }
+            if (-not $resp) { $none++ }
+            elseif ($resp.Code -eq "200") { $n200++ }
+            elseif ($resp.Code -eq "407") { $n407++ }
+            else { $other += $resp }
+        }
+        Write-Host ""
+        if ($byHost.Count -gt 1) { Write-Host "  $($g.Name):" -ForegroundColor White }
+        if ($other.Count -gt 0) {
+            foreach ($rg in @(Group-ProxyReplies -Replies $other)) {
+                $k = Get-ProxyReplyInfo -Code $rg.Items[0].Code -Phrase $rg.Items[0].Phrase -TargetHost $g.Name
+                Write-Host "  -> $($rg.Items.Count)/$($g.Count) tunnel(s) were answered ""$($k.Label)"" - $($k.Short)" -ForegroundColor Red
+            }
+        }
+        if ($n407 -gt 0) { Write-Host "  -> $n407/$($g.Count) tunnel(s) REJECTED pending authentication (407): the proxy wants credentials (see section 10)." -ForegroundColor Red }
+        if ($n200 -gt 0) { Write-Host "  -> $n200/$($g.Count) tunnel(s) ACCEPTED (200), but no TLS Client Hello for this host was found after the tunnel (see section 10)." -ForegroundColor Yellow }
+        if ($none -gt 0) { Write-Host "  -> $none/$($g.Count) tunnel(s) got no response at all - proxy unreachable/dropping, or outside the capture window." -ForegroundColor Yellow }
+    }
+}
+
+# Suffix for a host in the "similar domains" list: what the proxy answered when it failed, or that the host was only ever seen as a CONNECT.
+function Get-ProxyNote {
+    param([string]$HostName, [bool]$HadTls)
+    $reqs = @($connectRequests | Where-Object { ([string](Get-HostFromConnectTarget -Target $_.Target)).ToLower() -eq $HostName.ToLower() })
+    if ($reqs.Count -eq 0) { return "" }
+    $counts = [ordered]@{}
+    foreach ($r in $reqs) {
+        $resp = if ($httpResponseByStream.ContainsKey($r.Stream)) { $httpResponseByStream[$r.Stream] } else { $null }
+        $label = if ($resp) { if ($resp.Phrase) { "$($resp.Code) $($resp.Phrase)" } else { "$($resp.Code)" } } else { "no response" }
+        if ($counts.Contains($label)) { $counts[$label] = $counts[$label] + 1 } else { $counts[$label] = 1 }
+    }
+    if ($HadTls -and (@($counts.Keys | Where-Object { -not $_.StartsWith("200") }).Count -eq 0)) { return "" }
+    $parts = @(); foreach ($key in $counts.Keys) { $parts += "$key x$($counts[$key])" }
+    return "   (HTTP CONNECT via proxy: $($parts -join ', '))"
+}
+
 # Pulls total byte counts for a set of TCP streams via tshark's conv stat.
 function Get-StreamByteCounts {
     param([string[]]$Streams)
@@ -1209,6 +1566,64 @@ function Get-StreamByteCounts {
         }
     }
     return $result
+}
+
+# V16.5.6: the client itself (not the server) refused the certificate chain, and
+# that chain is Microsoft's genuine one (no inspecting vendor in it): the problem
+# is the device's own trust of the chain, not SSL inspection. Needs TLS 1.2: under
+# TLS 1.3 the certificate and the alert are encrypted, so a passive capture cannot
+# show either. Returns @{ Cns; Alert } or $null.
+function Get-DeviceRejectedGenuineChain {
+    param([string]$Stream, [string]$AlertDetail, [array]$ClientHellos)
+    if (-not $Stream -or -not $AlertDetail) { return $null }
+    # $alertsByStream holds "level - description"; both are blank when the alert is encrypted
+    if ($AlertDetail -match '^\s*(\d+)\s*-\s*(\d+)\s*$') { $level = $Matches[1]; $desc = $Matches[2] } else { return $null }
+    if ($level -ne '2' -or -not $ClientRejectsChainAlertNames.ContainsKey($desc)) { return $null }
+    $alertSrc = if ($alertSrcByStream.ContainsKey($Stream)) { $alertSrcByStream[$Stream] } else { '' }
+    $hello = @($ClientHellos | Where-Object { $_.Stream -eq $Stream } | Select-Object -First 1)
+    # an alert from the server is not the client refusing the chain
+    if (-not $alertSrc -or $hello.Count -eq 0 -or (Get-FirstValue $hello[0].Src) -ne $alertSrc) { return $null }
+    $cns = @(Get-CertificateCommonNames -Stream $Stream -Full)
+    if ($cns.Count -eq 0) { return $null }
+    $lower = ($cns -join ', ').ToLower()
+    if (@($ProxyVendorKeywords | Where-Object { $lower -like "*$_*" }).Count -gt 0) { return $null }
+    if (@($MicrosoftChainKeywords | Where-Object { $lower -like "*$_*" }).Count -eq 0) { return $null }
+    return @{ Cns = @($cns | Select-Object -First 6); Alert = "Fatal: $($ClientRejectsChainAlertNames[$desc]) ($desc)" }
+}
+
+# V16.5.6: one finding for a destination that failed at a handshake stage (the URL
+# sweeps and -Domain). A device that rejected Microsoft's genuine chain is a
+# "Certificate trust" finding; everything else is the Connectivity finding as before.
+function Add-StageFailureFinding {
+    param([string]$HostName, [string]$Ip, $Status, [string]$Section)
+    if ($Status.Trust) {
+        $chain = $Status.Trust.Cns -join ', '
+        $cause = 'The server presented a normal Microsoft certificate chain (' + $chain + '), not one re-signed by an inspecting proxy, and the device itself refused it. ' +
+            'That points to the device''s own certificate trust: the root or intermediate CA is missing or cannot be built because Windows cannot maintain its trusted root list. ' +
+            'Causes to check, in order: the Automatic Root Certificates Update blocked (ctldl.windowsupdate.com unreachable for SYSTEM, or the "Turn off Automatic Root Certificates Update" policy), ' +
+            'Cryptographic Services (CryptSvc) missing permissions on HKLM\SOFTWARE\Microsoft\SystemCertificates\AuthRoot and its AutoUpdate subkey ' +
+            '(the cause in a previous case: a working server had the permission, the failing one did not), or an old, unpatched Windows without the current Microsoft roots.'
+        $fix = 'On the device, read-only: Get-Service CryptSvc; Get-Acl on HKLM:\SOFTWARE\Microsoft\SystemCertificates\AuthRoot and on its AutoUpdate subkey, then compare the permissions with a working server of the same OS ' +
+            '(copy the missing permission, restart the server, retest the Defender cloud connection); reg query "HKLM\SOFTWARE\Policies\Microsoft\SystemCertificates\AuthRoot" /v DisableRootAutoUpdate (0x1 = root update turned off by policy); ' +
+            'certutil -verifyctl AuthRootWU from an elevated prompt; and confirm ctldl.windowsupdate.com (plain HTTP, port 80) is reachable for the SYSTEM account too. ' +
+            'Do NOT add an SSL-inspection exclusion for this: the certificate is genuine and nothing is re-signing it.'
+        Add-Finding -Category "Certificate trust" `
+            -GroupKey "RootTrust|$HostName" `
+            -Target "$HostName ($Ip)" `
+            -Section $Section `
+            -Issue "$HostName - this device rejected Microsoft's genuine certificate chain (TLS alert $($Status.Trust.Alert)) right after the server sent it." `
+            -LikelyCause $cause `
+            -SuggestedFix $fix
+        return
+    }
+    $guidance = Get-ConnectivityIssueGuidance -Stage $Status.Stage -Reason $Status.Reason
+    Add-Finding -Category "Connectivity" `
+        -GroupKey "Connectivity|$HostName|$($Status.Stage)" `
+        -Target "$HostName ($Ip)" `
+        -Section $Section `
+        -Issue "$HostName failed at the $($Status.Stage) stage - $($Status.Reason)" `
+        -LikelyCause $guidance.Cause `
+        -SuggestedFix $guidance.Fix
 }
 
 # Determines the connection status for one destination IP by walking the
@@ -1227,14 +1642,15 @@ function Get-IpHandshakeStatus {
     $gotIcmp = $icmpByIp.ContainsKey($Ip)
     $matchingStreams = if ($synByIp.ContainsKey($Ip)) { $synByIp[$Ip] } else { @() }
     $gotFinalAck = ($matchingStreams | Where-Object { $ackStreams -contains $_ }).Count -gt 0
-    $hadClientHello = ($RelevantClientHellos | Where-Object { $_.Dst -eq $Ip }).Count -gt 0
+    $hadClientHello = @($RelevantClientHellos | Where-Object { $_.Dst -eq $Ip }).Count -gt 0
     $hadServerHello = ($matchingStreams | Where-Object { $serverHellosByStream.ContainsKey($_) }).Count -gt 0
     $hadAlert = $false
     $alertDetail = $null
+    $alertStream = $null
     $hadReset = $false
     $resetDetail = $null
     foreach ($s in $matchingStreams) {
-        if ($alertsByStream.ContainsKey($s)) { $hadAlert = $true; $alertDetail = $alertsByStream[$s] }
+        if ($alertsByStream.ContainsKey($s)) { $hadAlert = $true; $alertDetail = $alertsByStream[$s]; $alertStream = $s }
         if ($rstByStream.ContainsKey($s)) { $hadReset = $true; $resetDetail = $rstByStream[$s] }
     }
     $hadData = ($matchingStreams | Where-Object {
@@ -1244,6 +1660,12 @@ function Get-IpHandshakeStatus {
     if ($gotIcmp) {
         return @{ Ok = $false; Stage = "Network"; Reason = "ICMP error: $($icmpByIp[$Ip])" }
     } elseif (-not $sentSyn) {
+        # V16.5.5: only plain HTTP (port 80) was tried, and never answered: that is a failure, not "no attempt" (reported once, by section 10).
+        $syn80 = @()
+        if ($synByIp80.ContainsKey($Ip)) { $syn80 = @($synByIp80[$Ip] | Select-Object -Unique) }
+        if ($syn80.Count -gt 0 -and -not $synAckByIp80.ContainsKey($Ip)) {
+            return @{ Ok = $false; Stage = "SYN-ACK (port 80)"; Reason = "TCP SYN to port 80 (plain HTTP) sent in $($syn80.Count) connection attempt(s), no SYN-ACK received - connection filtered or dropped, or the destination is unreachable on that port" }
+        }
         return @{ Ok = $null; Stage = "No attempt"; Reason = "No outbound TCP SYN observed to this IP in the capture" }
     } elseif (-not $gotSynAck) {
         return @{ Ok = $false; Stage = "SYN-ACK"; Reason = "TCP SYN sent, no SYN-ACK received - server unreachable, connection filtered, or request timed out" }
@@ -1264,7 +1686,7 @@ function Get-IpHandshakeStatus {
         $hadSubstantialData = $alertBytes -gt 2048
 
         if ($alertLevelKnown) {
-            return @{ Ok = $false; Stage = "TLS Alert"; Reason = "TLS was rejected: $alertDetail ($alertBytes bytes exchanged first)." }
+            return @{ Ok = $false; Stage = "TLS Alert"; Reason = "TLS was rejected: $alertDetail ($alertBytes bytes exchanged first)."; Trust = (Get-DeviceRejectedGenuineChain -Stream $alertStream -AlertDetail $alertDetail -ClientHellos $RelevantClientHellos) }
         } elseif ($hadSubstantialData) {
             $resetNote = if ($hadReset) { " (Connection also ended with a TCP reset from $resetDetail after the data - normal cleanup, not a red flag here.)" } else { "" }
             return @{ Ok = $null; Stage = "TLS Close (uncertain)"; Reason = "Session completed normally - $alertBytes bytes exchanged - then closed with a TLS alert whose exact reason can't be read (encrypted). Looks like a routine close, not a rejection.$resetNote" }
@@ -1341,7 +1763,7 @@ function Show-HandshakeStatusForSni {
     $results = foreach ($ip in $IpsForSni) {
         [PSCustomObject]@{ Ip = $ip; Status = (Get-IpHandshakeStatus -Ip $ip -RelevantClientHellos $GroupClientHellos -ByteCounts $ByteCountsForSni) }
     }
-    $anyComplete = ($results | Where-Object { $_.Status.Ok -eq $true }).Count -gt 0
+    $anyComplete = @($results | Where-Object { $_.Status.Ok -eq $true }).Count -gt 0
     # Stronger, independent corroboration: did ANY stream tied to this SNI get
     # a real ServerHello back, regardless of which IP the fragile per-IP SYN
     # correlation attributed it to? This catches cases the per-IP $anyComplete
@@ -1349,7 +1771,7 @@ function Show-HandshakeStatusForSni {
     # individual IP shows "no Client Hello sent" even though the SNI-level
     # cert check (section 6/8) already proved a real negotiated session
     # exists somewhere in the capture for this exact hostname.
-    $sniHadServerHello = ($GroupClientHellos | Where-Object { $serverHellosByStream.ContainsKey($_.Stream) }).Count -gt 0
+    $sniHadServerHello = @($GroupClientHellos | Where-Object { $serverHellosByStream.ContainsKey($_.Stream) }).Count -gt 0
     $sniConfirmedBySslCheck = $script:SniConfirmedGoodMap.ContainsKey($SniName) -and $script:SniConfirmedGoodMap[$SniName]
     $hostnameConfirmedGood = $anyComplete -or $sniHadServerHello -or $sniConfirmedBySslCheck
 
@@ -1367,14 +1789,8 @@ function Show-HandshakeStatusForSni {
             # the same hostname is fine.
             $counts.Failed++
             Write-Host "     [FAILED]  $SniName ($ip) - FAILED AT: $($status.Stage) - $($status.Reason)" -ForegroundColor Red
-            $guidance = Get-ConnectivityIssueGuidance -Stage $status.Stage -Reason $status.Reason
-            Add-Finding -Category "Connectivity" `
-                -GroupKey "Connectivity|$SniName|$($status.Stage)" `
-                -Target "$SniName ($ip)" `
-                -Section "Section $SectionNumber (MDE URL Handshake Status sweep)" `
-                -Issue "$SniName failed at the $($status.Stage) stage - $($status.Reason)" `
-                -LikelyCause $guidance.Cause `
-                -SuggestedFix $guidance.Fix
+            if ($status.Trust) { Write-Host "               The device refused Microsoft's genuine certificate chain: a root-trust problem on this device, not SSL inspection (see the finding in section 11)." -ForegroundColor Red }
+            Add-StageFailureFinding -HostName $SniName -Ip $ip -Status $status -Section "Section $SectionNumber (MDE URL Handshake Status sweep)"
         } elseif ($status.Stage -eq "TLS Close (uncertain)") {
             $counts.Info++
             Write-Host "     [INFO]    $SniName ($ip) - $($status.Reason)" -ForegroundColor DarkGray
@@ -1418,6 +1834,7 @@ function Show-ProxyDetectionCheck {
         Write-Host "     [OK] No HTTP CONNECT tunnels or 407 Proxy-Authentication-Required responses observed anywhere in this capture." -ForegroundColor Green
         Write-Host "     No explicit forward proxy detected in-path for this traffic. NOTE: this cannot detect a transparent/" -ForegroundColor DarkGray
         Write-Host "     TAP-mode inspecting proxy that intercepts without a CONNECT handshake - see the SSL inspection check above for that." -ForegroundColor DarkGray
+        Show-DirectNoAnswer
         Write-Host "==============================================================================" -ForegroundColor Cyan
         return
     }
@@ -1453,14 +1870,18 @@ function Show-ProxyDetectionCheck {
             $reqs = $group.Group
             $matchesCommercial = ($MdeRequiredUrlPatterns | Where-Object { $targetHost -like $_ }).Count -gt 0
             $matchesGov = ($GovRequiredUrlPatterns | Where-Object { $targetHost -like $_ }).Count -gt 0
+            # V16.5.5: findings are also raised for the host the -Domain switch is about, even when it is not a documented MDE URL.
+            $asked = [bool]($Domain -and ($targetHost -like "*$Domain*"))
+            $report = $matchesCommercial -or $matchesGov -or $asked
 
             $acceptedTlsFollowed = 0; $acceptedNoTls = 0; $acceptedNoTlsWithData = 0
-            $rejected407 = 0; $otherCode = 0; $noResp = 0
+            $rejected407 = 0; $noResp = 0
+            $otherReplies = @()    # answers other than 200 and 407
             foreach ($req in $reqs) {
                 $resp = if ($httpResponseByStream.ContainsKey($req.Stream)) { $httpResponseByStream[$req.Stream] } else { $null }
                 if (-not $resp) { $noResp++; continue }
                 if ($resp.Code -eq "200") {
-                    $tlsOnStream = ($clientHellos | Where-Object { $_.Stream -eq $req.Stream }).Count -gt 0
+                    $tlsOnStream = @($clientHellos | Where-Object { $_.Stream -eq $req.Stream }).Count -gt 0
                     if ($tlsOnStream) {
                         $acceptedTlsFollowed++
                     } else {
@@ -1471,7 +1892,7 @@ function Show-ProxyDetectionCheck {
                 } elseif ($resp.Code -eq "407") {
                     $rejected407++
                 } else {
-                    $otherCode++
+                    $otherReplies += $resp
                 }
             }
             $totalAcceptedNoTls += $acceptedNoTls
@@ -1485,6 +1906,8 @@ function Show-ProxyDetectionCheck {
                 $label = if ($matchesCommercial) { "COMMERCIAL" } else { "US GOV" }
                 Write-Host "         -> Matches a documented $label MDE connectivity URL - Defender traffic for this hostname is" -ForegroundColor Red
                 Write-Host "            being explicitly proxied - confirms a forward proxy sits in the path for MDE traffic specifically." -ForegroundColor Red
+            } elseif ($asked) {
+                Write-Host "         -> Not a documented MDE connectivity URL, but it is the host you asked about with -Domain." -ForegroundColor Yellow
             } else {
                 Write-Host "         -> Does not match a documented MDE connectivity URL - unrelated proxied traffic (general" -ForegroundColor DarkGray
                 Write-Host "            browsing, Windows Update/telemetry, or another application sharing this capture)." -ForegroundColor DarkGray
@@ -1508,27 +1931,18 @@ function Show-ProxyDetectionCheck {
             if ($rejected407 -gt 0) {
                 Write-Host "         -> $rejected407/$($reqs.Count) tunnel(s) REJECTED pending authentication (407). Common root cause for the" -ForegroundColor Red
                 Write-Host "            Sense service specifically, which runs as SYSTEM and often lacks cached/WinHTTP proxy credentials." -ForegroundColor Red
-                if ($matchesCommercial -or $matchesGov) {
-                    Add-Finding -Category "Proxy" `
-                        -GroupKey "ProxyAuth407|$targetHost" `
-                        -Target $targetHost `
-                        -Section "Section 10 (Proxy Detection)" `
-                        -Issue "$rejected407/$($reqs.Count) CONNECT tunnel(s) to $targetHost were rejected pending proxy authentication (407)." `
-                        -LikelyCause "The forward proxy requires authentication before allowing this connection through - a common root cause for the Sense service specifically, since it runs as SYSTEM and typically has no cached/WinHTTP proxy credentials." `
-                        -SuggestedFix "Configure a proxy authentication exception/allow-list for MDE URLs, or provide the SYSTEM account (WinHTTP) with proxy credentials/authentication bypass, per Microsoft's Sense proxy configuration guidance."
-                }
+                if ($report) { Add-407Finding -TargetHost $targetHost -Reqs $reqs -Rejected407 $rejected407 }
             }
-            if ($otherCode -gt 0) {
-                Write-Host "         -> $otherCode/$($reqs.Count) tunnel(s) got another response code - investigate proxy-side policy/ACL." -ForegroundColor Red
-                if ($matchesCommercial -or $matchesGov) {
-                    Add-Finding -Category "Proxy" `
-                        -GroupKey "ProxyOtherCode|$targetHost" `
-                        -Target $targetHost `
-                        -Section "Section 10 (Proxy Detection)" `
-                        -Issue "$otherCode/$($reqs.Count) CONNECT tunnel(s) to $targetHost got an unexpected response code from the proxy (not 200 or 407)." `
-                        -LikelyCause "The proxy is actively blocking this destination via policy/ACL rather than simply requiring authentication." `
-                        -SuggestedFix "Add an allow-list/exception on the proxy for the documented MDE connectivity URLs, then re-test."
+            if ($otherReplies.Count -gt 0) {
+                # V16.5.5: what the proxy actually said (504 Unknown Host is the proxy failing to resolve the name, 403 is a policy block...).
+                foreach ($rg in @(Group-ProxyReplies -Replies $otherReplies)) {
+                    $k = Get-ProxyReplyInfo -Code $rg.Items[0].Code -Phrase $rg.Items[0].Phrase -TargetHost $targetHost
+                    Write-Host "         -> $($rg.Items.Count)/$($reqs.Count) tunnel(s) were answered ""$($k.Label)"" - $($k.Short)" -ForegroundColor Red
+                    if ($k.Kind -eq "dns") {
+                        Write-Host "            The device never looks this name up itself (the proxy does), so this capture has no DNS query or TLS Client Hello for it." -ForegroundColor Yellow
+                    }
                 }
+                if ($report) { Add-ProxyReplyFinding -TargetHost $targetHost -Reqs $reqs -Replies $otherReplies }
             }
             if ($noResp -gt 0) {
                 Write-Host "         -> $noResp/$($reqs.Count) tunnel(s) got no response at all - proxy unreachable/dropping, or outside capture window." -ForegroundColor Yellow
@@ -1556,7 +1970,7 @@ function Show-ProxyDetectionCheck {
                 if (-not $resp) {
                     Write-Host "         -> No response observed." -ForegroundColor Yellow
                 } elseif ($resp.Code -eq "200") {
-                    $tlsOnStream = ($clientHellos | Where-Object { $_.Stream -eq $req.Stream }).Count -gt 0
+                    $tlsOnStream = @($clientHellos | Where-Object { $_.Stream -eq $req.Stream }).Count -gt 0
                     $bytesForStream = if ($streamPayloadBytes.ContainsKey($req.Stream)) { $streamPayloadBytes[$req.Stream] } else { 0 }
                     if ($tlsOnStream) {
                         Write-Host "         -> Accepted (200); TLS Client Hello followed." -ForegroundColor Green
@@ -1577,7 +1991,7 @@ function Show-ProxyDetectionCheck {
     # also got challenged by the proxy for authentication. Capped the same
     # way as the CONNECT detail list, for the same reason.
     $connectStreams = $connectRequests | ForEach-Object { $_.Stream } | Select-Object -Unique
-    $otherAuth407s = $all407Frames | Where-Object { $connectStreams -notcontains $_.Stream }
+    $otherAuth407s = @($all407Frames | Where-Object { $connectStreams -notcontains $_.Stream })
     if ($otherAuth407s.Count -gt 0) {
         Write-Host "`n     -- Additional 407 responses (not tied to a CONNECT tunnel): $($otherAuth407s.Count) --" -ForegroundColor Yellow
         $shown = if ($Detailed) { $otherAuth407s } else { $otherAuth407s | Select-Object -First 10 }
@@ -1600,6 +2014,7 @@ function Show-ProxyDetectionCheck {
             -SuggestedFix "Extend the proxy authentication exception to CRL/OCSP endpoints as well, not just the main MDE HTTPS URLs - a block here can cause certificate validation delays/failures even when the main TLS channel connects fine."
     }
 
+    Show-DirectNoAnswer
     Write-Host "==============================================================================" -ForegroundColor Cyan
 }
 
@@ -1647,9 +2062,9 @@ $govDnsMatches = $dnsRecords | Where-Object {
 if ($Domain) {
     Show-SummaryHeaderOnce
 
-    $dnsMatches = $dnsRecords | Where-Object { $_.QryName -like "*$Domain*" }
+    $dnsMatches = @($dnsRecords | Where-Object { $_.QryName -like "*$Domain*" })
     $resolvedIps = @()
-    $dnsErrors = $dnsMatches | Where-Object { $_.Rcode -and $_.Rcode -ne "0" -and $_.Rcode -ne "" }
+    $dnsErrors = @($dnsMatches | Where-Object { $_.Rcode -and $_.Rcode -ne "0" -and $_.Rcode -ne "" })
     foreach ($rec in $dnsMatches) {
         if ($rec.A) {
             $rec.A -split "[;,]" | ForEach-Object {
@@ -1659,7 +2074,7 @@ if ($Domain) {
         }
     }
 
-    $chMatches = $clientHellos | Where-Object { $_.SNI -and $_.SNI -like "*$Domain*" }
+    $chMatches = @($clientHellos | Where-Object { $_.SNI -and $_.SNI -like "*$Domain*" })
     $matchedStreams = ($chMatches | ForEach-Object { $_.Stream }) | Select-Object -Unique
     foreach ($rec in $chMatches) {
         if ($rec.Dst -and ($resolvedIps -notcontains $rec.Dst)) { $resolvedIps += $rec.Dst }
@@ -1677,13 +2092,29 @@ if ($Domain) {
 
 
     if ($chMatches.Count -eq 0 -and $allDomainIps.Count -eq 0) {
-        Write-Host "No DNS or TLS traffic found for '$Domain' in this capture." -ForegroundColor Red
+        # V16.5.5: a host the device only asked a proxy for (HTTP CONNECT) has no DNS or TLS on the device's side - say what the proxy answered.
+        $connectMatches = @($connectRequests | Where-Object { (Get-HostFromConnectTarget -Target $_.Target) -like "*$Domain*" })
+        if ($connectMatches.Count -gt 0) {
+            Show-DomainProxyAttempts -ConnectMatches $connectMatches
+        } else {
+            Write-Host "No DNS or TLS traffic found for '$Domain' in this capture." -ForegroundColor Red
+        }
         $allSni = $clientHellos | Select-Object -ExpandProperty SNI -Unique | Where-Object { $_ }
+        $sniSet = @{}
+        foreach ($s in $allSni) { $sniSet[$s.ToLower()] = $true }
+        # Names the device only asked a proxy for never show up as a DNS query or an SNI, so they are added to the list from the CONNECTs.
+        $pool = @(); $seenNames = @{}
+        $viaProxyHosts = @($connectRequests | ForEach-Object { Get-HostFromConnectTarget -Target $_.Target } | Where-Object { $_ -and ($_ -notlike "*$Domain*") })
+        foreach ($h in (@($allSni) + $viaProxyHosts)) {
+            if (-not $h) { continue }
+            $key = $h.ToLower()
+            if (-not $seenNames.ContainsKey($key)) { $seenNames[$key] = $true; $pool += $h }
+        }
         if ($domainLabels.Count -gt 0) {
-            $similar = $allSni | Where-Object { $sni = $_; ($domainLabels | Where-Object { $sni -like "*$_*" }).Count -gt 0 }
+            $similar = $pool | Where-Object { $sni = $_; ($domainLabels | Where-Object { $sni -like "*$_*" }).Count -gt 0 }
             if ($similar) {
                 Write-Host "`nSimilar domains found in this capture:" -ForegroundColor Yellow
-                $similar | Select-Object -First 15 | ForEach-Object { Write-Host "  $_" }
+                $similar | Select-Object -First 15 | ForEach-Object { Write-Host "  $_$(Get-ProxyNote -HostName $_ -HadTls ([bool]$sniSet.ContainsKey($_.ToLower())))" }
             }
         }
     } else {
@@ -1736,6 +2167,10 @@ if ($Domain) {
         }
 
         Write-Host "`n4) OUTBOUND CONNECTIVITY:"
+        $proxyIps = @($connectRequests | ForEach-Object { $_.Dst } | Select-Object -Unique)
+        if ($proxyIps.Count -gt 0 -and (@($chMatches | Where-Object { $proxyIps -contains $_.Dst }).Count -gt 0)) {
+            Write-Host "     (Reached through an explicit proxy: the address listed below is the proxy's, which opened the connection to the host for this device.)" -ForegroundColor DarkGray
+        }
         $okCount = ($ipStatus.Values | Where-Object { $_.Ok -eq $true }).Count
         $failIps = $ipStatus.GetEnumerator() | Where-Object { $_.Value.Ok -eq $false }
         $unkIps  = $ipStatus.GetEnumerator() | Where-Object { $_.Value.Ok -eq $null }
@@ -1755,14 +2190,12 @@ if ($Domain) {
                 Write-Host "       [OK]      $ip - [$($s.Stage)] $($s.Reason)" -ForegroundColor Green
             } elseif ($s.Ok -eq $false) {
                 Write-Host "       [FAILED]  $ip - FAILED AT: $($s.Stage) - $($s.Reason)" -ForegroundColor Red
-                $guidance = Get-ConnectivityIssueGuidance -Stage $s.Stage -Reason $s.Reason
-                Add-Finding -Category "Connectivity" `
-                    -GroupKey "Connectivity|$Domain|$($s.Stage)" `
-                    -Target "$Domain ($ip)" `
-                    -Section "Section 3-4 (-Domain handshake status)" `
-                    -Issue "$Domain failed at the $($s.Stage) stage - $($s.Reason)" `
-                    -LikelyCause $guidance.Cause `
-                    -SuggestedFix $guidance.Fix
+                if ($s.Stage -eq "SYN-ACK (port 80)") {
+                    Write-Host "                 (Reported with the other direct connections that got no answer, in section 10.)" -ForegroundColor DarkGray
+                } else {
+                    if ($s.Trust) { Write-Host "                 The device refused Microsoft's genuine certificate chain: a root-trust problem on this device, not SSL inspection (see the finding in section 11)." -ForegroundColor Red }
+                    Add-StageFailureFinding -HostName $Domain -Ip $ip -Status $s -Section "Section 3-4 (-Domain handshake status)"
+                }
             } else {
                 Write-Host "       [UNKNOWN] $ip - [$($s.Stage)] $($s.Reason)" -ForegroundColor Yellow
             }
@@ -1935,7 +2368,7 @@ if ($RunCommercialHandshakes) {
         $dnsOnlyNames = @($mdeTargets | Where-Object { -not $_.HasTls } | ForEach-Object { $_.Name })
         if ($dnsOnlyNames.Count -gt 0) {
             Write-Host "`n     DNS resolved but no TLS traffic observed for:" -ForegroundColor Yellow
-            $dnsOnlyNames | ForEach-Object { Write-Host "       - $_" -ForegroundColor Yellow }
+            $dnsOnlyNames | ForEach-Object { Write-Host "       - $_$(Get-NoAnswerNote -Name $_)" -ForegroundColor Yellow }
         }
     } else {
         $totalOk = 0; $totalFailed = 0; $totalUnknown = 0; $totalInfo = 0
@@ -1959,7 +2392,7 @@ if ($RunCommercialHandshakes) {
         $dnsOnlyNoTls = @($mdeTargets | Where-Object { -not $_.HasTls -and $_.Ips.Count -eq 0 } | ForEach-Object { $_.Name })
         if ($dnsOnlyNoTls.Count -gt 0) {
             Write-Host "`n     DNS resolved but no TLS traffic observed for:" -ForegroundColor Yellow
-            $dnsOnlyNoTls | ForEach-Object { Write-Host "       - $_" -ForegroundColor Yellow }
+            $dnsOnlyNoTls | ForEach-Object { Write-Host "       - $_$(Get-NoAnswerNote -Name $_)" -ForegroundColor Yellow }
         }
 
         Write-Host "`n     TOTAL: $totalOk OK, $totalFailed FAILED, $totalUnknown UNKNOWN, $totalInfo INFO (across $($mdeTargetsToCheck.Count) MDE URL(s), $($totalOk + $totalFailed + $totalUnknown + $totalInfo) IP(s) checked)"
@@ -1998,7 +2431,7 @@ if ($RunGovHandshakes) {
         $dnsOnlyNames = @($govTargets | Where-Object { -not $_.HasTls } | ForEach-Object { $_.Name })
         if ($dnsOnlyNames.Count -gt 0) {
             Write-Host "`n     DNS resolved but no TLS traffic observed for:" -ForegroundColor Yellow
-            $dnsOnlyNames | ForEach-Object { Write-Host "       - $_" -ForegroundColor Yellow }
+            $dnsOnlyNames | ForEach-Object { Write-Host "       - $_$(Get-NoAnswerNote -Name $_)" -ForegroundColor Yellow }
         }
     } else {
         $totalOk = 0; $totalFailed = 0; $totalUnknown = 0; $totalInfo = 0
@@ -2022,7 +2455,7 @@ if ($RunGovHandshakes) {
         $dnsOnlyNoTls = @($govTargets | Where-Object { -not $_.HasTls -and $_.Ips.Count -eq 0 } | ForEach-Object { $_.Name })
         if ($dnsOnlyNoTls.Count -gt 0) {
             Write-Host "`n     DNS resolved but no TLS traffic observed for:" -ForegroundColor Yellow
-            $dnsOnlyNoTls | ForEach-Object { Write-Host "       - $_" -ForegroundColor Yellow }
+            $dnsOnlyNoTls | ForEach-Object { Write-Host "       - $_$(Get-NoAnswerNote -Name $_)" -ForegroundColor Yellow }
         }
 
         Write-Host "`n     TOTAL: $totalOk OK, $totalFailed FAILED, $totalUnknown UNKNOWN, $totalInfo INFO (across $($govTargetsToCheck.Count) Gov URL(s), $($totalOk + $totalFailed + $totalUnknown + $totalInfo) IP(s) checked)"
@@ -2060,7 +2493,7 @@ if ($script:Findings.Count -eq 0) {
 } else {
     Write-Host "     $($script:Findings.Count) issue(s) found that likely need action, grouped below by area:" -ForegroundColor Yellow
 
-    $categoryOrder = @("Connectivity", "TLS / SSL Inspection", "Cipher Compliance", "Proxy")
+    $categoryOrder = @("Connectivity", "TLS / SSL Inspection", "Certificate trust", "Cipher Compliance", "Proxy")
     $extraCategories = @($script:Findings | Select-Object -ExpandProperty Category -Unique | Where-Object { $categoryOrder -notcontains $_ })
     $orderedCategories = $categoryOrder + $extraCategories
 
@@ -2128,6 +2561,12 @@ if ($Copilot -ne 'Off') {
 
     $copilotPrompt = @"
 You are a senior Microsoft Defender for Endpoint (MDE) support engineer. Below is the SUMMARY & RECOMMENDED ACTIONS section from a packet-capture analysis of a customer's device. Base your answer only on these findings - do not invent URLs, settings, or evidence - and do not run tools or commands. Write plain text only: no markdown, no bold, no tables.
+
+DATA HANDLING RULES - follow these before answering:
+- These findings come from a customer support case.
+- Do not ask for, repeat, or retain personally identifiable information (PII): customer hostnames, device names, internal or customer domain names, usernames, email addresses, company names, tenant or organization IDs, or case numbers. If you need to refer to one, describe it generically, for example the proxy server or the affected device.
+- IP addresses (local/private and Microsoft service IPs) and Microsoft service URLs are not PII and can be used normally.
+- Do not ask the engineer for additional customer details.
 
 Switches used: $switchesUsed
 Customer cloud: $cloudHint

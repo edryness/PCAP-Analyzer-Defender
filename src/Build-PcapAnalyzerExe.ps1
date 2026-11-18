@@ -1,103 +1,185 @@
 <#
 .SYNOPSIS
-    Builds PCAP-Analyzer.exe: the GUI plus the V16.5 analyzer packed into one Windows program.
+    Builds PCAP-Analyzer.exe from PCAP-Analyzer-GUI.ps1 + the analyzer engine, with the
+    Section 12 Copilot PII guardrail added to the embedded engine's prompt.
 
 .DESCRIPTION
-    1. Installs the PS2EXE module for your user if it's missing (from the PowerShell Gallery).
-    2. Embeds PCAP-Analyzer.ps1 into PCAP-Analyzer-GUI.ps1 (base64).
-    3. Compiles that into PCAP-Analyzer.exe - a windowed app, no console.
-    4. Optionally signs the .exe with your code-signing certificate (-CertThumbprint).
+    Your .ps1 files are never modified. The build:
+      1. Syntax-checks the GUI and the engine.
+      2. Adds the DATA HANDLING RULES text to a COPY of the engine's Section 12 Copilot
+         prompt (prompt text only - no logic changes).
+      3. Embeds that copy into the GUI (the GUI's __EMBEDDED_ENGINE_BASE64__ placeholder).
+      4. Compiles a windowed STA EXE with PS2EXE.
+      5. Extracts the script back out of the EXE and confirms the guardrail is inside.
 
-    Re-run it whenever you change the analyzer or the GUI.
-
-.NOTES
-    Designed and developed by Bryan Rigano - Defender for Endpoint Team.
+    Test the exact code that goes into the EXE without compiling:
+      powershell -STA -ExecutionPolicy Bypass -File .\dist\PCAP-Analyzer-GUI.embedded.ps1
 
 .EXAMPLE
-    .\Build-PcapAnalyzerExe.ps1
+    powershell -ExecutionPolicy Bypass -File .\Build-PcapAnalyzerExe.ps1
+
 .EXAMPLE
-    .\Build-PcapAnalyzerExe.ps1 -Version 16.5.1.0 -CertThumbprint 0123456789ABCDEF0123456789ABCDEF01234567
+    .\Build-PcapAnalyzerExe.ps1 -EngineScript .\PCAP-Analyzer.ps1 -IconFile .\mde.ico -Version 16.5.6.0
+
+.EXAMPLE
+    .\Build-PcapAnalyzerExe.ps1 -DebugConsole     # EXE also opens a console that shows any startup errors
 #>
+[CmdletBinding()]
 param(
-    [string]$Analyzer = (Join-Path $PSScriptRoot 'PCAP-Analyzer.ps1'),
-    [string]$Gui      = (Join-Path $PSScriptRoot 'PCAP-Analyzer-GUI.ps1'),
-    [string]$Icon     = (Join-Path $PSScriptRoot 'mde.ico'),
-    [string]$OutFile  = (Join-Path $PSScriptRoot 'PCAP-Analyzer.exe'),
-    [string]$Version  = '16.5.0.0',
-    [string]$CertThumbprint
+    [string]$GuiScript    = '.\PCAP-Analyzer-GUI.ps1',
+    [string]$EngineScript = '',                 # default: the $EngineName set in the GUI script
+    [string]$OutputDir    = '.\dist',
+    [string]$ExeName      = 'PCAP-Analyzer.exe',
+    [string]$IconFile     = '.\mde.ico',
+    [string]$Version      = '16.5.6.0',
+    [switch]$DebugConsole
 )
+
 $ErrorActionPreference = 'Stop'
+function Step($m) { Write-Host "==> $m" -ForegroundColor Cyan }
+function Ok($m)   { Write-Host "    $m" -ForegroundColor Green }
+function Warn($m) { Write-Host "    $m" -ForegroundColor Yellow }
 
-# PS2EXE compiles against .NET Framework, so build from Windows PowerShell 5.1
-if ($PSVersionTable.PSEdition -eq 'Core') {
-    Write-Host 'Switching to Windows PowerShell 5.1 for the build...' -ForegroundColor Cyan
-    $wps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath)
-    foreach ($k in $PSBoundParameters.Keys) { $argList += "-$k"; $argList += [string]$PSBoundParameters[$k] }
-    & $wps @argList
-    exit $LASTEXITCODE
-}
-
-foreach ($f in @($Analyzer, $Gui)) {
-    if (-not (Test-Path -LiteralPath $f)) { throw "Missing file: $f" }
-}
-
-# 1) PS2EXE
-if (-not (Get-Module -ListAvailable -Name ps2exe)) {
-    Write-Host 'Installing the PS2EXE module (current user)...' -ForegroundColor Cyan
-    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    if (-not (Get-PackageProvider -ListAvailable -Name NuGet -ErrorAction SilentlyContinue)) {
-        Install-PackageProvider -Name NuGet -Scope CurrentUser -Force | Out-Null
+function Test-Syntax([string]$Path) {
+    $tokens = $null; $errs = $null
+    [void][System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$errs)
+    if ($errs.Count) {
+        $errs | ForEach-Object { Write-Host "    $(Split-Path $Path -Leaf) line $($_.Extent.StartLineNumber): $($_.Message)" -ForegroundColor Red }
+        throw "$(Split-Path $Path -Leaf) has syntax errors."
     }
-    Install-Module -Name ps2exe -Scope CurrentUser -Force -AllowClobber
+}
+
+# ---------------------------------------------------------------------------
+# Section 12 guardrail. Inserted right after the anchor line inside the engine's
+# double-quoted prompt here-string, so it must never contain a double quote,
+# a dollar sign or a backtick.
+# ---------------------------------------------------------------------------
+$Anchor = 'Write plain text only: no markdown, no bold, no tables.'
+$Rules  = @(
+    'DATA HANDLING RULES - follow these before answering:'
+    '- These findings come from a customer''s packet capture. Do not repeat, store, or ask for personally identifiable information (PII) or customer-identifying details: customer hostnames or device names, customer or internal domain names, usernames, email addresses, company or organization names (including names in certificate issuers), tenant or organization IDs, or case numbers. Refer to them generically instead, for example the proxy server, the inspecting certificate authority, or the affected device.'
+    '- IP addresses (local/private and Microsoft service IPs) and Microsoft service URLs are not PII - use them normally.'
+    '- These rules only limit what you repeat. Still give the complete, specific fix for every finding listed below.'
+    '- Do not ask the engineer for more customer details.'
+)
+foreach ($r in $Rules) { if ($r -match '["$`]') { throw "Guardrail text can't contain double quotes, dollar signs or backticks: $r" } }
+
+# --- Inputs -----------------------------------------------------------------
+Step 'Resolving inputs'
+$GuiScript = (Resolve-Path $GuiScript).Path
+$guiText   = [IO.File]::ReadAllText($GuiScript)
+if (-not $EngineScript) {
+    $m = [regex]::Match($guiText, '(?m)^\s*\$EngineName\s*=\s*''([^'']+)''')
+    if (-not $m.Success) { throw 'No -EngineScript given and $EngineName not found in the GUI script.' }
+    $EngineScript = Join-Path (Split-Path $GuiScript -Parent) $m.Groups[1].Value
+}
+$EngineScript = (Resolve-Path $EngineScript).Path
+if ($IconFile -and (Test-Path $IconFile)) { $IconFile = (Resolve-Path $IconFile).Path }
+else { if ($IconFile) { Warn "Icon not found ($IconFile) - building without one." }; $IconFile = '' }
+if (-not (Test-Path $OutputDir)) { New-Item -ItemType Directory -Path $OutputDir | Out-Null }
+$OutputDir     = (Resolve-Path $OutputDir).Path
+$exePath       = Join-Path $OutputDir $ExeName
+$guardedEngine = Join-Path $OutputDir 'PCAP-Analyzer-engine.guarded.ps1'
+$mergedPath    = Join-Path $OutputDir 'PCAP-Analyzer-GUI.embedded.ps1'
+foreach ($f in @($GuiScript, $EngineScript, $IconFile) | Where-Object { $_ }) {
+    try { Unblock-File -Path $f -ErrorAction SilentlyContinue } catch { }
+}
+Ok "GUI   : $GuiScript"
+Ok "Engine: $EngineScript"
+Ok "Icon  : $(if ($IconFile) { $IconFile } else { '(none)' })"
+Ok "Output: $exePath"
+if ($OutputDir -match 'OneDrive') { Warn 'Output is inside OneDrive - if the EXE misbehaves, build to a local folder (-OutputDir C:\Build\PCAP).' }
+
+# --- Checks -----------------------------------------------------------------
+Step 'Checking scripts'
+Test-Syntax $GuiScript
+Test-Syntax $EngineScript
+Ok 'No syntax errors in GUI or engine'
+$placeholder = "'__EMBEDDED_ENGINE_BASE64__'"
+$hits = ([regex]::Matches($guiText, [regex]::Escape($placeholder))).Count
+if ($hits -ne 1) { throw "Expected the engine placeholder $placeholder once in the GUI, found $hits." }
+Ok 'GUI embed placeholder found'
+
+# --- Guardrail into a copy of the engine -----------------------------------
+Step 'Adding PII guardrail to the Section 12 prompt (engine copy)'
+$engineBytes = [IO.File]::ReadAllBytes($EngineScript)
+$hasBom      = $engineBytes.Length -ge 3 -and $engineBytes[0] -eq 0xEF -and $engineBytes[1] -eq 0xBB -and $engineBytes[2] -eq 0xBF
+$engineText  = (New-Object System.Text.UTF8Encoding($false)).GetString($engineBytes, $(if ($hasBom) { 3 } else { 0 }), $engineBytes.Length - $(if ($hasBom) { 3 } else { 0 }))
+
+if ($engineText.Contains('DATA HANDLING RULES')) {
+    Warn 'Engine already contains DATA HANDLING RULES - embedding it as-is.'
+} else {
+    $anchorHits = ([regex]::Matches($engineText, [regex]::Escape($Anchor))).Count
+    if ($anchorHits -ne 1) { throw "Expected this line once in the engine's Section 12 prompt, found ${anchorHits}:`n    $Anchor" }
+    $nl = if ($engineText.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $engineText = $engineText.Replace($Anchor, $Anchor + $nl + $nl + ($Rules -join $nl))
+    Ok 'Guardrail inserted after the plain-text instruction'
+}
+$guardedBytes = [Text.Encoding]::UTF8.GetBytes($engineText)
+if ($hasBom) { $guardedBytes = [byte[]](0xEF, 0xBB, 0xBF) + $guardedBytes }
+[IO.File]::WriteAllBytes($guardedEngine, $guardedBytes)
+Test-Syntax $guardedEngine
+Ok "Engine copy parses cleanly -> $guardedEngine"
+
+# --- Embed ------------------------------------------------------------------
+Step 'Embedding engine into GUI'
+$merged = $guiText.Replace($placeholder, "'" + [Convert]::ToBase64String($guardedBytes) + "'")
+[IO.File]::WriteAllText($mergedPath, $merged, (New-Object System.Text.UTF8Encoding($true)))
+Test-Syntax $mergedPath
+Ok "Embedded ($([math]::Round($guardedBytes.Length / 1KB)) KB) -> $mergedPath"
+
+# --- PS2EXE -----------------------------------------------------------------
+Step 'Preparing PS2EXE'
+if (-not (Get-Module -ListAvailable -Name ps2exe)) {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    Install-Module ps2exe -Scope CurrentUser -Force -AllowClobber
 }
 Import-Module ps2exe
+Ok "ps2exe $((Get-Module ps2exe).Version)"
 
-# 2) Embed the analyzer into a temporary copy of the GUI
-$placeholder = '__EMBEDDED_' + 'ENGINE_BASE64__'
-$guiText = [IO.File]::ReadAllText($Gui)
-if (-not $guiText.Contains("'$placeholder'")) { throw "The GUI script doesn't contain the analyzer placeholder - was it edited?" }
-$engineB64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($Analyzer))
-$buildDir = Join-Path $env:TEMP ('pcap-analyzer-build-' + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
-$buildScript = Join-Path $buildDir 'PCAP-Analyzer.ps1'
-[IO.File]::WriteAllText($buildScript, $guiText.Replace("'$placeholder'", "'$engineB64'"), (New-Object System.Text.UTF8Encoding($true)))
+Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($ExeName)) -ErrorAction SilentlyContinue |
+    Where-Object { $_.Path -eq $exePath } | ForEach-Object { throw "$ExeName is running (PID $($_.Id)) - close it and rebuild." }
+if (Test-Path $exePath) { Remove-Item $exePath -Force }
 
-# 3) Compile
+Step 'Compiling'
 $ps2exeArgs = @{
-    inputFile   = $buildScript
-    outputFile  = $OutFile
-    noConsole   = $true
-    STA         = $true
+    inputFile   = $mergedPath
+    outputFile  = $exePath
+    STA         = $true          # WinForms, drag-and-drop and the clipboard need STA
     x64         = $true
-    noOutput    = $true
-    noError     = $true
-    DPIAware    = $true
     title       = 'PCAP Analyzer for MDE'
-    description = 'MDE connectivity analysis of packet captures, with Copilot action plans'
+    description = 'Packet Capture (PCAP) Analyzer for Microsoft Defender for Endpoint (MDE)'
     product     = 'PCAP Analyzer for MDE'
-    company     = 'Defender for Endpoint Team'
-    copyright   = 'Designed and developed by Bryan Rigano - Defender for Endpoint Team'
+    company     = 'Bryan Rigano - Defender for Endpoint Team'
+    copyright   = "(c) $(Get-Date -Format yyyy) Bryan Rigano"
     version     = $Version
 }
-if (Test-Path -LiteralPath $Icon) { $ps2exeArgs.iconFile = $Icon }
-Write-Host 'Compiling...' -ForegroundColor Cyan
+if ($DebugConsole) { Warn 'Debug build: a console window will show any startup errors.' }
+else               { $ps2exeArgs.noConsole = $true }
+if ($IconFile)     { $ps2exeArgs.iconFile = $IconFile }
+Invoke-ps2exe @ps2exeArgs
+
+Start-Sleep -Seconds 2   # a quarantined EXE disappears right after it's written
+if (-not (Test-Path $exePath)) {
+    throw 'The EXE was written but is gone - most likely quarantined. Check: Get-MpThreatDetection | Sort-Object InitialDetectionTime -Descending | Select-Object -First 3'
+}
+
+# --- Verify the EXE contains the guarded engine ----------------------------
+Step 'Verifying EXE contents'
+$extracted = Join-Path $OutputDir 'extracted-check.ps1'
+Remove-Item $extracted -ErrorAction SilentlyContinue
 try {
-    Invoke-ps2exe @ps2exeArgs
-} finally {
-    Remove-Item -LiteralPath $buildDir -Recurse -Force -ErrorAction SilentlyContinue
-}
-if (-not (Test-Path -LiteralPath $OutFile)) { throw 'PS2EXE did not produce the .exe - see the messages above.' }
+    Start-Process -FilePath $exePath -ArgumentList "-extract:`"$extracted`"" -Wait -WindowStyle Hidden
+    $x = [IO.File]::ReadAllText($extracted)
+    $b = [regex]::Match($x, '\$EmbeddedEngine\s*=\s*''([A-Za-z0-9+/=]+)''').Groups[1].Value
+    $inside = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b))
+    if ($inside.Contains('DATA HANDLING RULES')) { Ok 'EXE contains the engine with the PII guardrail' }
+    else { throw 'Engine inside the EXE is missing the PII guardrail.' }
+} catch {
+    Warn "Couldn't verify the EXE contents: $($_.Exception.Message)"
+} finally { Remove-Item $extracted -ErrorAction SilentlyContinue }
 
-# 4) Optional code signing (strongly recommended before sharing)
-if ($CertThumbprint) {
-    $cert = Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -CodeSigningCert | Where-Object Thumbprint -eq $CertThumbprint | Select-Object -First 1
-    if (-not $cert) { throw "No code-signing certificate with thumbprint $CertThumbprint in CurrentUser\My or LocalMachine\My." }
-    $sig = Set-AuthenticodeSignature -FilePath $OutFile -Certificate $cert -TimestampServer 'http://timestamp.digicert.com' -HashAlgorithm SHA256
-    Write-Host "Signature: $($sig.Status)" -ForegroundColor $(if ($sig.Status -eq 'Valid') { 'Green' } else { 'Yellow' })
-}
-
-$size = [math]::Round((Get-Item -LiteralPath $OutFile).Length / 1KB)
-Write-Host ''
-Write-Host "Built: $OutFile  ($size KB)" -ForegroundColor Green
-Write-Host 'Double-click it to launch. Keep Wireshark (tshark) installed on any PC that runs it.' -ForegroundColor Green
+Step 'Build complete'
+Ok "EXE    : $exePath"
+Ok "Version: $Version"
+Ok "SHA256 : $((Get-FileHash $exePath -Algorithm SHA256).Hash)"

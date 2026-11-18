@@ -19,7 +19,7 @@ What each section checks, how to read the output, and what the common findings m
 | 7 | Handshake Status sweep (commercial) | `-All` | Pass / fail / failing stage for every commercial MDE URL |
 | 8 | SSL Inspection Check (US Gov) | `-All` | The same inspection check for GCC / GCC High / DoD URLs |
 | 9 | Handshake Status sweep (US Gov) | `-All` | Pass / fail / failing stage for every US Gov URL |
-| 10 | Proxy Detection | Always | HTTP CONNECT tunnels and 407 proxy-authentication responses |
+| 10 | Proxy Detection | Always | HTTP CONNECT tunnels, what the proxy answered (407, 504, 403...), and direct port-80 connections that got no answer |
 | 11 | Summary & Recommended Actions | Always | Actionable issues only, with cause, fix, and evidence |
 | 12 | Copilot Action Plan | Always (unless Copilot is Off) | Engineer-facing recommended fix |
 
@@ -55,9 +55,10 @@ Full details are in the [Setup and User Guide](setup-guide.md#the-switches).
 |---|---|---|
 | Network (ICMP error) | Something actively rejected the connection | Firewall / routing ACLs for an explicit deny |
 | SYN-ACK | No response at all to the connection attempt | Outbound TCP 443 blocked or filtered; stale DNS |
+| SYN-ACK (port 80) | A plain-HTTP request (certificate revocation or issuer download) never got an answer | Outbound TCP 80 to the Microsoft host; a component bypassing the proxy |
 | ACK | TCP handshake didn't complete | Asymmetric routing, or a device dropping mid-handshake |
 | TLS Server Hello | Client Hello sent, server never answered | SNI-based filtering, or a proxy/firewall dropping TLS to that hostname |
-| TLS Alert | TLS was actively rejected | SSL inspection, an untrusted CA on the device, or URL/SNI filtering |
+| TLS Alert | TLS was actively rejected | SSL inspection, an untrusted CA on the device, or URL/SNI filtering. If the device itself refused a genuine Microsoft certificate chain, the finding is Certificate trust instead (see below) |
 
 ---
 
@@ -68,7 +69,11 @@ Full details are in the [Setup and User Guide](setup-guide.md#the-switches).
 | **Possible SSL inspection** on an MDE URL | A proxy, firewall, or security tool is re-signing the traffic, or forcing an older TLS version | Add an SSL-inspection bypass for the MDE URLs on that device; if one exists, confirm it's actually applied |
 | **CONNECT rejected with 407** | The proxy requires authentication; Sense runs as SYSTEM and has no proxy credentials | Add a proxy-authentication exception for MDE URLs, or configure SYSTEM/WinHTTP proxy access |
 | **407 on plain-HTTP (CRL/OCSP)** | Certificate-validation requests are challenged too | Extend the exception to CRL/OCSP endpoints |
-| **CONNECT rejected with another code** | The proxy is blocking the destination by policy | Allow-list the MDE URLs on the proxy |
+| **CONNECT answered 403 (or another 4xx)** | The proxy is blocking the destination by policy | Allow-list the MDE URLs on the proxy |
+| **CONNECT answered 504 Unknown Host** | The proxy could not resolve the name: its own DNS, not a block. Names that exist only in another cloud (for example `mdav.usm` or `mdav.usd`) normally fail this way and are harmless unless the tenant is in that cloud | Fix the proxy's DNS for the name only if the tenant needs it |
+| **CONNECT answered 5xx or 3xx** | A gateway error, or a redirect to a sign-in or block page | Check the proxy's upstream path and its authentication or block-page rules for the MDE URLs |
+| **Direct connection (port 80) gets no answer** | A plain-HTTP request to a Microsoft host (certificate revocation, issuer download) is dropped, often because it bypasses the proxy that carries the other MDE traffic | Allow outbound TCP 80 to the Microsoft certificate endpoints, or make the request use the proxy (WinHTTP system proxy) |
+| **Certificate trust: the device rejected Microsoft's genuine certificate chain** | The device sent a fatal TLS alert (`bad_certificate`, `certificate_unknown`, `unknown_ca`) after a normal Microsoft chain, so Windows cannot build trust: Cryptographic Services (CryptSvc) missing permissions on the `AuthRoot` registry keys, `ctldl.windowsupdate.com` blocked, the "Turn off Automatic Root Certificates Update" policy, or an unpatched Windows. TLS 1.2 captures only | Run the read-only checks listed in the finding and compare the `AuthRoot` and `AutoUpdate` key permissions with a working server of the same OS. Do not add an SSL-inspection exclusion: the certificate is genuine |
 | **Connection failed at a stage** | See the stage table above | See the stage table above |
 | **Missing required TLS 1.2 / 1.3 suites** | Device cipher-suite policy (GPO, registry, or an old OS build) | Update the cipher suite order, then re-test |
 

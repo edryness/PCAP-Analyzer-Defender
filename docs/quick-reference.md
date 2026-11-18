@@ -30,9 +30,10 @@
 |---|---|
 | Network (ICMP) | Firewall / routing explicit deny |
 | SYN-ACK | Outbound TCP 443 blocked or filtered |
+| SYN-ACK (port 80) | Outbound TCP 80 (certificate revocation / issuer downloads) blocked, or bypassing the proxy |
 | ACK | Asymmetric routing / mid-handshake drop |
 | TLS Server Hello | SNI filtering / proxy dropping TLS |
-| TLS Alert | SSL inspection / untrusted CA / URL filtering |
+| TLS Alert | SSL inspection / untrusted CA / URL filtering (a device refusing a genuine Microsoft chain is reported as Certificate trust) |
 
 ## Copilot setting
 

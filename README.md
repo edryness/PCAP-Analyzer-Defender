@@ -2,7 +2,7 @@
 
 Diagnose Microsoft Defender for Endpoint (MDE) connectivity problems from a packet capture in minutes.
 
-PCAP Analyzer reads a capture (for example `ConvertedTrace.pcapng` from MDE Client Analyzer) and checks every URL Defender for Endpoint needs, commercial and US Gov. It flags SSL/TLS inspection, handshake failures, missing cipher suites, and proxy-authentication blocks, then summarizes only the issues that need action. Optionally, Copilot adds a short recommended fix.
+PCAP Analyzer reads a capture (for example `ConvertedTrace.pcapng` from MDE Client Analyzer) and checks every URL Defender for Endpoint needs, commercial and US Gov. It flags SSL/TLS inspection, a device that rejects Microsoft's genuine certificate chain, handshake failures, missing cipher suites, and proxy blocks or authentication failures, then summarizes only the issues that need action. Optionally, Copilot adds a short recommended fix.
 
 *Created by Bryan Rigano.* This is an independent community tool. It is not an official Microsoft product and is not supported by Microsoft.
 
@@ -12,7 +12,8 @@ PCAP Analyzer reads a capture (for example `ConvertedTrace.pcapng` from MDE Clie
 
 - **Full MDE URL sweep** (`-All`) - SSL-inspection check and handshake pass/fail for every documented commercial and US Gov (GCC / GCC High / DoD) MDE and Defender Antivirus URL.
 - **Single-host deep dive** (`-Domain`) - TLS version and ciphers offered vs. negotiated, per-stage handshake results (SYN / SYN-ACK / ACK / TLS), byte counts, and Microsoft cipher-suite compliance. Add `-Detailed` for every Client Hello and Server Hello.
-- **Proxy detection** - HTTP CONNECT tunnels and `407 Proxy Authentication Required`, a common failure for the Sense service, which runs as SYSTEM.
+- **Proxy detection** - HTTP CONNECT tunnels and what the proxy answered: `407 Proxy Authentication Required` (a common failure for the Sense service, which runs as SYSTEM), `504 Unknown Host` (the proxy failing to resolve a name, not a block), `403` policy blocks. Also direct port-80 connections to Microsoft hosts (certificate revocation, issuer downloads) that never get an answer.
+- **Certificate trust** - When the device itself refuses a genuine Microsoft certificate chain, the finding points at the device's trusted-root list instead of SSL inspection, with read-only checks to run (TLS 1.2 captures only).
 - **Actionable summary** - Only real issues, each with a likely cause, a suggested fix, and the section holding the evidence.
 - **Copilot recommended fix (optional)** - GitHub Copilot CLI answers in the app, or the prompt goes to Microsoft 365 Copilot Chat. Only the summary text is sent, never the capture.
 - **Windows app or PowerShell script** - The same analyzer, with a GUI or from the command line.
@@ -68,7 +69,7 @@ cd src
 powershell.exe -ExecutionPolicy Bypass -File .\Build-PcapAnalyzerExe.ps1
 ```
 
-The build uses [PS2EXE](https://github.com/MScholtes/PS2EXE) (installed for the current user on first run) to package the GUI and analyzer into `PCAP-Analyzer.exe`. Pass `-CertThumbprint <thumbprint>` to sign it.
+The build uses [PS2EXE](https://github.com/MScholtes/PS2EXE) (installed for the current user on first run) to package the GUI and analyzer into `PCAP-Analyzer.exe`. The build checks the scripts, embeds the analyzer, and verifies the result; the app is written to `src/dist`. It does not sign the app: sign it with your code-signing certificate before sharing it.
 
 ## Contributing and issues
 

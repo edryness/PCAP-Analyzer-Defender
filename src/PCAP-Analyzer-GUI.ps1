@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    PCAP Analyzer for MDE - Windows GUI for PCAP-Analyzer.ps1
+    PCAP Analyzer for MDE - Windows GUI for PCAP-Analyzer.ps1 (analyzer V16.5.6)
 
 .DESCRIPTION
     Pick a capture, tick -All and/or -Domain, press Run. The analyzer runs in a hidden
@@ -34,7 +34,7 @@ Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 # =============================================================================
 # Settings and paths
 # =============================================================================
-$AppTitle   = 'PCAP Analyzer for MDE  -  V16.5 + Copilot'
+$AppTitle   = 'PCAP Analyzer for MDE  -  V16.5.6 + Copilot'
 $AppCredit  = 'Designed and developed by Bryan Rigano  |  Defender for Endpoint Team'
 $Disclaimer = 'Results are generated automatically from packet-capture analysis and AI-assisted recommendations. ' +
               'Validate findings in Wireshark before acting on them or sharing them with customers, particularly where a result appears inconsistent or unexpected.'

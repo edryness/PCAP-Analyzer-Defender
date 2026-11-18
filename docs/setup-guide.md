@@ -114,8 +114,8 @@ You only do this once per user, per machine.
 | 7 - Handshake Status (commercial) | Pass / fail / failing stage for every commercial MDE URL found in the capture. |
 | 8 - SSL Inspection Check (US Gov) | The same inspection check against the GCC / GCC High / DoD URL list. |
 | 9 - Handshake Status (US Gov) | Pass / fail / failing stage for every US Gov URL found. |
-| 10 - Proxy Detection *(always runs)* | HTTP CONNECT tunnels (explicit proxy) and `407 Proxy Authentication Required` responses. Proxy authentication is a common failure, because the Sense service runs as SYSTEM. |
-| 11 - Summary & Recommended Actions *(always runs)* | Only the real, actionable issues: connectivity failures, SSL inspection, missing cipher suites, and proxy authentication. Each has a likely cause, a suggested fix, and the section with the evidence. |
+| 10 - Proxy Detection *(always runs)* | HTTP CONNECT tunnels (explicit proxy) and what the proxy answered (`407 Proxy Authentication Required`, `504 Unknown Host`, `403`...), plus direct port-80 connections to Microsoft hosts that got no answer. Proxy authentication is a common failure, because the Sense service runs as SYSTEM. |
+| 11 - Summary & Recommended Actions *(always runs)* | Only the real, actionable issues: connectivity failures, SSL inspection, a device rejecting Microsoft's genuine certificate chain (Certificate trust), missing cipher suites, and proxy problems. Each has a likely cause, a suggested fix, and the section with the evidence. |
 | 12 - Copilot Action Plan *(always runs unless Copilot is Off)* | Copilot's recommended fix for the Section 11 findings, shown in green. |
 
 **When to use it:** As the first pass on any new capture. It checks the full required URL surface, not just the URL you already suspect, so it often surfaces problems you didn't know to look for.

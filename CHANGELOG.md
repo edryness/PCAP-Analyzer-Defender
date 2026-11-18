@@ -1,5 +1,21 @@
 # Changelog
 
+## V16.5.6
+- New finding, **Certificate trust**. When the device itself sends a fatal TLS alert (`bad_certificate`, `certificate_unknown` or `unknown_ca`) right after a genuine Microsoft certificate chain (Microsoft / DigiCert / Baltimore / GlobalSign names, no inspecting vendor in it), the result is no longer a plain Connectivity failure or "possible SSL inspection". It points at the device's own trusted-root list (Cryptographic Services missing permissions on the `AuthRoot` registry keys, `ctldl.windowsupdate.com` blocked, the "Turn off Automatic Root Certificates Update" policy, an unpatched Windows) and lists read-only checks to run on the device.
+- TLS 1.2 only: under TLS 1.3 the certificate and the alert are encrypted. An alert sent by the server, `certificate_expired` / `certificate_revoked`, or a chain with an inspecting vendor in it keep their old findings.
+
+## V16.5.5
+- Proxy answers are read, not just counted. A CONNECT answered `504 Unknown Host` is the proxy failing to resolve the name (its DNS, not a block); other 5xx is a gateway error, 3xx a redirect to a sign-in or block page, and only the other 4xx (403...) is called a policy block. The finding's cause and fix follow the answer.
+- `-Domain` for a host the device only asked a proxy for (HTTP CONNECT): lists the CONNECT requests with the proxy's answers and why there is no DNS or TLS, instead of "No DNS or TLS traffic found". Such hosts also appear in the "similar domains" list.
+- Plain HTTP (TCP 80) is followed. Certificate revocation and issuer downloads (for example `www.microsoft.com/pkiops`, `caissuers.microsoft.com`) that never get a SYN-ACK are listed in Section 10 as direct connections to Microsoft hosts that got no answer, with a Connectivity finding.
+- Windows PowerShell 5.1 fix: a single matching Client Hello, 407 or DNS record looked like none ("0 had a TLS Client Hello follow" for a tunnel that did have one; `-Domain` skipping sections for a host with a single Client Hello).
+
+## V16.5.4
+- The Copilot prompt starts with data-handling rules: Copilot must not ask for, repeat or retain customer identifying data (hostnames, domains, usernames, emails, company names, tenant IDs, case numbers).
+
+## V16.5.3
+- Added US Gov / DoD and commercial portal URL coverage (`security.apps.mil`, `*.gcc.securitycenter.microsoft.us`, `security.microsoft.com`, `login.microsoftonline.com`, the portal auth/CDN hosts and the Linux configuration hosts).
+
 ## V16.5.2
 - Copilot output is engineer-facing only; customer-email drafting removed. Customer-facing text Copilot adds anyway is cut before display and saving.
 
